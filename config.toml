@@ -1,3 +1,4 @@
 baseURL = 'https://kamitsumi.com/'
 languageCode = 'ja-jp'
 title = '紙積'
+theme = "PaperMod"
