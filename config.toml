@@ -2,3 +2,98 @@ baseURL = 'https://kamitsumi.com/'
 languageCode = 'ja-jp'
 title = '紙積'
 theme = "PaperMod"
+
+paginate = 10
+
+enableRobotsTXT = true
+
+[minify]
+  disableXML = true
+  minifyOutput = true
+
+[menu]
+  [[menu.main]]
+    identifier = 'tags'
+    name = 'tags'
+    url = '/tags/'
+    weight = 10
+  [[menu.main]]
+    identifier = 'search'
+    name = 'search'
+    url = '/search/'
+    weight = 20
+  [[menu.main]]
+    identifier = 'contact'
+    name = 'contact'
+    url = '/contact/'
+    weight = 30
+
+[markup]
+  [markup.highlight]
+    codeFences = true
+    guessSyntax = true
+    noClasses = true
+    style = 'monokai'
+
+[outputs]
+  home = ['HTML', 'RSS', 'JSON' ]
+
+[params]
+  env = "production"
+  title = "紙積"
+  description = "技術メモ"
+  keywords = [ "Programming", "Computer", "Tips" ]
+  author = "0x60DF"
+  DateFormat = "2006-1-2"
+  defaultTheme = "auto"
+  disableThemeToggle = false
+
+  ShowReadingTime = true
+  ShowShareButtons = false
+  ShowPostNavLinks = false
+  ShowBreadCrumbs = true
+  ShowCodeCopyButtons = false
+  ShowWordCount = true
+  ShowRssButtonInSectionTermList = true
+  UseHugoToc = true
+  disableSpecial1stPost = true
+  disableScrollToTop = false
+  comments = false
+  hidemeta = false
+  hideSummary = false
+  showtoc = true
+  tocopen = false
+
+  [params.fuseOpts]
+    isCaseSensitive = false
+    shouldSort = true
+    location = 0
+    distance = 1_000
+    threshold = 0.4
+    minMatchCharLength = 0
+    keys = [ "title", "permalink", "summary", "content" ]
+
+  [params.profileMode]
+    enabled = false
+
+  [params.cover]
+  hidden = true
+  hiddenInList = true
+  hiddenInSingle = true
+
+  [params.homeInfoParams]
+    Title = '技術メモ'
+    Content = '著者： 0x60DF'
+
+  [[params.socialIcons]]
+    name = "github"
+    url = "https://github.com/0x60df/"
+
+  [[params.socialIcons]]
+    name = "email"
+    url = "mailto:0x60df@gmail.com"
+
+  [params.analytics.google]
+    SiteVerificationTag = "G-4YRCJEYXB4"
+
+  showDescription =false
