@@ -1,0 +1,192 @@
+#+TITLE: Org-mode/Hugo/Cloudflare-Pagesでブログを作る
+#+AUTHOR: 0x60DF
+#+DATE: <2022-11-05 Sat 00:55>
+#+EMAIL: 0x60df@gmail.com
+#+LANGUAGE: ja
+#+slug: blog-in-org-mode-hugo-cloudflare-pages
+#+description: Org-modeで記事を作成し、Hugoで静的サイト生成、Cloudflare Pagesでホスティングする構成でのブログの作成記録。
+#+tags[]: Org-mode Hugo Emacs
+#+lastmod: <2022-11-05 Sat 00:55>
+#+isCJKLanguage: true
+
+既存のサービスに依存しない書き物の置き場所が欲しかったので、
+手に馴染んだOrg-modeに、HugoとCloudflare Pagesを組み合わせて作ってみました。
+作成時の手順を以下にメモとして残します。
+各ツール・サービスの詳細については、優れた紹介ページが沢山あるので割愛。
+
+* 構成
+
+- Org-mode: 記事ファイルの作成
+- Hugo: 記事ファイルをもとに静的サイト生成
+- Cloudflare Pages: 生成したサイトのホスティング
+
+* 手順
+
+** Hugoでサイトの枠組みを用意する
+[[https://gohugo.io/getting-started/quick-start/][公式のQuick Start]] に従って、記事を書くサイトの枠組みを用意していきます。
+
+1. Hugoのインストール\\
+   主要なOSにおいてはパッケージが提供されています。
+   #+begin_src sh
+     sudo apt-get install hugo       # Debian
+     sudo pacman -S hugo             # Arch Linux
+     sudo dnf install hugo           # Fedora
+     bew install hugo                # macOS
+   #+end_src
+   Go製なので、[[https://github.com/gohugoio/hugo/releases][バイナリ]]をダウンロードしてパスに置くだけでも動いてくれます。
+2. サイトの作成\\
+   適当なディレクトリに移動して、下記コマンドを実行すると、 ~site_name~ というディレクトリ
+   が作られ、その中にサイトの雛形一式が用意されます。
+   #+begin_src sh
+     hugo new site site_name              # site_nameという名前のサイトを作成する
+   #+end_src
+3. Gitで初期化\\
+   作成したサイトをCloudflare Pagesでホスティングする際、Gitのレポジトリが必要になるので、
+   初期化を済ませておきます。
+   #+begin_src sh
+     cd site_name
+     git init
+   #+end_src
+4. テーマの追加\\
+   好みのテーマを探して、生成したサイトに追加します。[[https://themes.gohugo.io/][公式のテーマ集]]だけでもバリエーション豊富です。
+   #+begin_src sh
+     git submodule add https://github.com/chosen/theme.git themes/chosen_theme
+   #+end_src
+   追加したテーマを設定ファイルで指定しておきます。
+   #+begin_src sh
+     echo theme = \"chosen_theme\" >> config.toml
+   #+end_src
+5. テーマの設定\\
+   テーマごとに設定方法が異なります。
+   テーマのドキュメントを確認して、必要に応じて設定を行っておきます。
+6. サイトの設定\\
+   サイトのルートディレクトリ直下にある ~config.toml~ が
+   サイト全体の設定ファイルです。
+   最低限 ~baseURL~ と ~title~ を設定しておきます。
+   #+begin_src conf
+     baseURL = 'https://site_name.pages.dev/' # Cloudflare Pages発行のURLを使う場合
+     title = 'site_name'
+     theme = "chosen_theme"
+   #+end_src
+7. プレビュー\\
+   生成したサイトは、ローカルでサーバーを動作させることで、
+   手元でプレビューすることができます。
+   サイトのルートディレクトリで下記のコマンドを実行すれば、プレビュー用サーバが動き出します。
+   #+begin_src sh
+     hugo server
+   #+end_src
+   ブラウザで ~http://localhost:1313/~ にアクセスすれば、
+   生成されたサイトの出来栄えが確認できます。
+
+** Org-modeで記事を書く
+
+1. 記事ファイルの作成\\
+   記事用の ~org~ ファイルは、 ~/content/posts~ 下に作成します。
+   1つのファイルから1つの記事が生成されます。
+   #+begin_src text
+     .
+     ├── archetypes
+     │   └── default.md
+     ├── config.toml
+     ├── content        <- ここにpostsを作りorgファイルを置く
+     ├── data
+     ├── layouts
+     ├── public
+     ├── static
+     └── themes
+   #+end_src
+   ~content~ の下に作成するディレクトリの名前は任意に設定することができますが、
+   多くの場合 ~posts~ が無難です。詳細は[[#hugo-content-type][補足]]をご覧ください。
+2. 記事のメタ情報の設定\\
+   Org-modeの[[https://orgmode.org/manual/Export-Settings.html][exportオプション記法]]を使って、記事のメタ情報を設定できます。
+   Hugoが認識するオプションの一覧は[[https://gohugo.io/content-management/front-matter/][公式ドキュメント]]で確認できます。
+   本記事で指定したオプションは以下の通りです。
+   #+begin_src org
+     ,#+TITLE: Org-mode/Hugo/Cloudflare-Pagesでブログを作る
+     ,#+AUTHOR: 0x60DF
+     ,#+DATE: <2022-11-05 Sat 00:55>
+     ,#+EMAIL: 0x60df@gmail.com
+     ,#+LANGUAGE: ja
+     ,#+slug: blog-in-org-mode-hugo-cloudflare-pages
+     ,#+description: Org-modeで記事を作成し、Hugoで静的サイト生成、Cloudflare Pagesでホスティングする構成でのブログの作成記録。
+     ,#+tags[]: Org-mode Hugo Emacs
+     ,#+lastmod: <2022-11-05 Sat 00:55>
+     ,#+isCJKLanguage: true
+   #+end_src
+   ~tags~ のように、複数の値を設定するタイプのオプションは、
+   末尾に ~[]~ を書き添えて、空白区切りで指定してあげれば認識されます。
+   その他の注意点は、[[#hugo-export-option][補足]]をご覧ください。
+3. 本文の作成\\
+   通常のOrg-modeの記法で記事を書いていきます。
+   もし、込み入ったことがしたいときは、可搬性が落ちますが、[[https://gohugo.io/content-management/shortcodes/][Hugoのスニペット機能]]
+   を使うことができます。
+
+** Cloudflare Pagesでホスティングしてサイトを公開する
+
+Cloudflare Pagesでは、Github/GitLabと接続することで、
+レポジトリの取り込み、Hugoによるサイトの生成、公開を自動で行ってくれます。
+CLIツール（ ~wrangler~ ）を使って、Gitレポジトリを直接デプロイすることもできますが、
+Cloudflare PagesのスコープがWeb上のレポジトリとの接続に向かっていそうなので、
+ここでは、Githubを使って、サイト公開を進めていきます。
+
+1. Githubにレポジトリ設置\\
+   ここまでで作成したデータ一式をGithubに設置します。
+   #+begin_src sh
+     git add .
+     git commit -m "Commit massage."
+     git remote add origin https://github.com/repository/path.git
+     git push origin master
+   #+end_src
+2. Cloudflare Pagesでプロジェクト作成\\
+   Cloudflareでアカウントを作成して、Pagesの管理画面に入り、
+   プロジェクトを作成します。
+   案内に従って、接続するGithubのアカウントを指定します。
+   続いて、ホスティングするサイトのレポジトリを選びます。
+   最後に、サイト生成の設定を下図の通り行います。
+
+   [[./blog-in-org-mode-hugo-cloudflare-pages-build-settings.png]]
+
+   デフォルトで使われるHugoのバージョンが古いので、使用しているテーマによっては、
+   ビルドが失敗します。
+   これを回避するために、環境背変数を設定し、新しいバージョンをしています。
+   バージョン番号は適宜選択ください。
+   また、コマンドにオプション（ ~--minify~ など）を渡したいときや、
+   サイトの設定で出力先ディレクトリを変えたときも、ここで設定できます。
+
+以上で、作成したブログが公開されます。
+
+* 補足
+
+** Hugoのcontent配下のディレクトリ名
+:PROPERTIES:
+:CUSTOM_ID: hugo-content-type
+:END:
+
+~content~ の下に置かれるディレクトリの名前は、
+さらにその配下に置かれるファイルの[[https://gohugo.io/content-management/types/][タイプ]]を規定します。
+ここには任意の文字列を設定できますが、
+Hugo内部でメタ情報として扱われるので、少し注意が必要です。
+例えば、ページを生成するために、[[https://gohugo.io/templates/lookup-order/][どのテンプレートを使うかを決める際]]、
+タイプが参照されます。
+テンプレートはテーマによって提供されるので、
+選んだテーマによっては、使うべきタイプのガイドラインが示されているかもしれません。
+特になければ、公式ドキュメントで例示されている ~posts~ の使用が前提になっている
+可能性が高いと思われるので、 ~posts~ にしておくことで無用なトラブルを避けられます。
+
+** Orgファイルでexportオプションを設定するときの注意点
+:PROPERTIES:
+:CUSTOM_ID: hugo-export-option
+:END:
+Hugoに直接 ~org~ ファイルを読み込ませる場合、当然のことながら、
+パースにEmacsは使われません。
+そのためか、オプションを指定する部分で、
+書き方に気をつけないとうまく動作しないケースがあるようです。
+本記事作成時に書き方を色々試したところ、オプション設定中に空行が挟まると、
+以後のオプションが認識されないようでした。
+オプションは、ファイルの先頭に、空行を開けず、素直な順序で記載しておくのがよさそうです。
+
+** このブログのGitレポジトリ
+実際に作成したGitレポジトリは、下記リンク先に設置してあります。\\
+https://github.com/0x60df/kamitsumi
+
+
