@@ -6,7 +6,7 @@
 #+slug: blog-in-org-mode-hugo-cloudflare-pages
 #+description: Org-modeで記事を作成し、Hugoで静的サイト生成、Cloudflare Pagesでホスティングする構成でのブログの作成記録。
 #+tags[]: Org-mode Hugo Emacs
-#+lastmod: <2022-11-05 Sat 00:55>
+#+lastmod: <2022-11-05 Sat 22:45>
 #+isCJKLanguage: true
 
 既存のサービスに依存しない書き物の置き場所が欲しかったので、
@@ -110,7 +110,7 @@
      ,#+slug: blog-in-org-mode-hugo-cloudflare-pages
      ,#+description: Org-modeで記事を作成し、Hugoで静的サイト生成、Cloudflare Pagesでホスティングする構成でのブログの作成記録。
      ,#+tags[]: Org-mode Hugo Emacs
-     ,#+lastmod: <2022-11-05 Sat 00:55>
+     ,#+lastmod: <2022-11-05 Sat 22:45>
      ,#+isCJKLanguage: true
    #+end_src
    ~tags~ のように、複数の値を設定するタイプのオプションは、
@@ -183,6 +183,53 @@ Hugoに直接 ~org~ ファイルを読み込ませる場合、当然のことな
 本記事作成時に書き方を色々試したところ、オプション設定中に空行が挟まると、
 以後のオプションが認識されないようでした。
 オプションは、ファイルの先頭に、空行を開けず、素直な順序で記載しておくのがよさそうです。
+
+** Cloudflare Pagesでカスタムドメインを設定する
+Cloudflare Pagesでは、自動発行される ~site_name.pages.dev~ に加えて、
+カスタムドメインを設定することもできます。
+サイトの管理画面のメニューに、カスタムドメイン設定があるので、
+画面の案内に従って必要事項を入力していけば、別途取得したドメインを設定することができます。
+無事設定が完了すれば、SSLも有効化されます。
+
+ドメインは、どこで取得してもよいのですが、DNSの管理はClaudflareに移す必要があります。
+よそでDNSを管理している場合は、カスタムドメインを設定中に、
+Cloudflareとドメインレジストラー両方で、DNS移行の設定をすることになります。
+Cloudflareは、レジストラーサービス（[[https://www.cloudflare.com/ja-jp/products/registrar/][Cloudflare Regstrar]]）も提供しており、
+ここでドメインを登録しておくと、DNS移行の手間がかかりません。
+
+カスタムドメインを設定する場合、Googleの検索エンジンに
+ドメインの登録を行っておいたほうが良さそうです。
+Hugoでは、サイトマップも自動生成されるので、クロールを制限したいページなどがなければ、
+サイトマップ作成の手間は必要ありません。
+~https://domain/sitemap.xml~ をGoogle Search Consoleに登録しておけば、
+周回をかけてくれます。
+
+** Google Analyticsの設定
+本記事作成時、Google Analyticsが仕様のアップデートの過渡期（UA->GA4）にありました。
+Hugoは、[[https://gohugo.io/templates/internal/][新旧どちらの仕様もサポート]]してくれているので、
+テーマが対応していれば、 ~config.toml~ で下記のように設定すればよいです。
+
+#+begin_src toml
+  # For GA4
+  googleAnalytics = 'G-XXXXXXXXXX'
+  # For UA
+  googleAnalytics = 'UA-XXXXXX-X'
+#+end_src
+
+残念ながら対応していない場合は、レイアウトを自作して、
+Google Analytics用のコードをヘッダに埋め込む必要があります。
+この場合、例えば、テーマの ~baseof.html~ を ~/layout/_default/~ にコピーして、
+ヘッダタグ部分に下記のような追記を行えば動作するはずです。
+
+#+begin_src html
+  <head>
+    <!-- Original code of theme -->
+
+    {{ template "_internal/google_analytics_async.html" . }}
+    <!-- or -->
+    {{ template "_internal/google_analytics.html" . }} <!-- recommended for GA4 -->
+  </head>
+#+end_src
 
 ** このブログのGitレポジトリ
 実際に作成したGitレポジトリは、下記リンク先に設置してあります。\\
