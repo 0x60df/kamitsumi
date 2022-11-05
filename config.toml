@@ -2,6 +2,7 @@ baseURL = 'https://kamitsumi.com/'
 languageCode = 'ja-jp'
 title = '紙積'
 theme = "PaperMod"
+timeZone = 'Asia/Tokyo'
 
 paginate = 10
 
