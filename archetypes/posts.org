@@ -1,0 +1,10 @@
+#+TITLE:
+#+AUTHOR: {{ .Site.Param "author" }}
+#+DATE: {{ .Date | time.Format "<2006-01-02 Mon 15:04>" }}
+#+EMAIL: 0x60df@gmail.com
+#+LANGUAGE: ja
+#+slug:
+#+description:
+#+tags[]:
+#+lastmod: {{ .Date | time.Format "<2006-01-02 Mon 15:04>" }}
+#+isCJKLanguage: true
