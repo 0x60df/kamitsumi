@@ -8,6 +8,8 @@ paginate = 10
 
 enableRobotsTXT = true
 
+googleAnalytics = G-4YRCJEYXB4
+
 [minify]
   disableXML = true
   minifyOutput = true
