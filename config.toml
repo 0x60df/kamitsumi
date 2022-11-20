@@ -86,7 +86,10 @@ googleAnalytics = 'G-4YRCJEYXB4'
 
   [params.homeInfoParams]
     Title = '技術メモ'
-    Content = '著者： 0x60DF'
+    Content = """著者： 0x60DF  
+    All documents are licensed under a Creative Commons Attribution 4.0
+    International License.
+    See http://creativecommons.org/licenses/by/4.0/ for the license."""
 
   [[params.socialIcons]]
     name = "github"
