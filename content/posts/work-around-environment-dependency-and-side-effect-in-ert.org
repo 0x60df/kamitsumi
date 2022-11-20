@@ -1,0 +1,535 @@
+#+TITLE: ERTで環境依存と副作用を何とかした記録
+#+AUTHOR: 0x60DF
+#+DATE: <2022-11-20 Sun 15:10>
+#+EMAIL: 0x60df@gmail.com
+#+LANGUAGE: ja
+#+slug: work-around-environment-dependency-and-side-effect-in-ert
+#+description:
+#+tags[]: Emacs Lisp Test
+#+lastmod: <2022-11-20 Sun 15:10>
+#+isCJKLanguage: true
+
+自作のEmacsのパッケージ用にテストを書こうと思い、[[https://www.gnu.org/software/emacs/manual/html_node/ert/index.html][ERT]]を使い始めました。
+[[https://www.gnu.org/software/emacs/manual/html_node/ert/Tests-and-Their-Environment.html][公式の推奨]]としては、テストは環境に依存せず、副作用を残さないのが好ましいとのこと。
+テストが冪等でないとデバッグが困難になることや、
+~ert~ が通常のEmacsのセッション中に実行されうることを考えると、
+これは当たり前の要件ですね。
+
+ただ、テストを書きたかったパッケージにおいて、環境依存と副作用、
+両方が機能の中心にあったので、パッケージの大部分の関数がこれらを持っておりました。
+テストする関数ごとに、それぞれをケアするフィクスチャーを用意するのは大変ですし、
+テストの定義が関数の実装に依存してしまうので、設計としてもうまくありません。
+そこで、パッケージが影響する範囲をまるごとカバーするような疑似環境をマクロで作って、
+テストはその中に書くことにしました。
+実行中のEmacsの状態の内、パッケージが関連する部分について切り出して、
+モックにしてしまうイメージです。
+これを使えば、環境依存や副作用に気を取られることなく、
+各被テスト関数の要件に集中してテストを書くことができます。
+
+今回、依存の対象であったのは以下の要素です。
+- パッケージが定義するグローバル変数（ ~defvar~ ）
+- パッケージが定義するローカル変数（ ~defvar-local~ ）
+- 任意のシンボルの値とプロパティ
+- ~current-buffer~
+- パッケージ外のフック
+- variable-watcher
+さらにこの内、グローバル/ローカル変数とシンボルについて、副作用を与える可能性がありました。
+これらを何とかするために作った疑似環境マクロについて、以下の通り記録を残します。
+
+* 疑似環境マクロの大枠
+テスト用の疑似環境を準備して、テスト後に復元処理を走らせるフィクスチャをマクロで作ります。
+#+begin_src emacs-lisp
+  (defmacro with-sample-pseudo-environment (&rest body)
+    "Evaluate BODY with pseudo environment."
+    `(progn
+       ;; Preparation without side effect
+       (unwind-protect
+           (progn
+             ;; Preparation with side effect
+             ,@body)
+         ;; Restoration
+         )))
+#+end_src
+[[https://www.gnu.org/software/emacs/manual/html_node/ert/Fixtures-and-Test-Suites.html][ERTのマニュアル]]で例示されている方法とほぼ同じ構成ですが、
+テストの本体を ~lambda~ で包まなくてよいように、関数でなくマクロにしています。
+使い方は下記の通りです。
+#+begin_src emacs-lisp
+  (ert-deftest sample-test ()
+    "Test definition."
+    (with-sample-pseudo-environment
+      ;; Body of the test
+      )
+#+end_src
+
+* 環境依存・副作用対象ごとのマクロ実装の内容
+
+以下では、各環境依存・副作用対象について、回避策をひとつずつ上記のマクロへ実装していきます。
+
+** グローバル変数
+~defvar~ で定義されたグローバル（バッファローカル値を持たない）変数は、
+テストの本体を ~let~ で包んであげれば、現在の状態から隔離できます。
+#+begin_src emacs-lisp
+  (defvar global-variable1 11)
+  (defvar global-variable2 12)
+
+  (defmacro with-sample-pseudo-environment (&rest body)
+    "Evaluate BODY with pseudo environment."
+    `(let ((global-variable1 21)          ; 21 and 22 can be arbitrary form
+           (global-variable2 22)          ; for let-bound values.
+           ;; ...
+           )
+       (unwind-protect
+           (progn
+             ,@body)
+         )))
+#+end_src
+テスト本体で ~global-variable1~ を参照すると、 ~let~ で束縛した ~21~ が返されます。
+同様に、 ~global-variable1~ に ~setq~ したときは、
+大元の変数ではなく ~let~ の束縛が変更されます。
+変数の束縛方法がダイナミックとレキシカルのいずれであっても、
+上記のように ~let~ で包んでおけば無事隔離されます。
+これは、 ~defvar~ で宣言された変数は、
+束縛方法の設定によらず[[https://www.gnu.org/software/emacs/manual/html_node/elisp/Using-Lexical-Binding.html][ダイナミックとして扱われる]]ためです。
+（ ~defconst~ ， ~defcustom~  も同様です）。
+
+ただし、 ~defvar~ で宣言していても、
+~setq-local~ などでローカル変数が作られている可能性があるときは注意が必要です。
+テスト本体で、ローカル変数が作られたバッファに ~with-current-buffer~ などすると
+~let~ の防壁が外れ、変数の参照ではローカル値が返され、
+変数に対する変更はローカル変数に副作用として残ります。
+ローカル変数が作られる可能性があるグローバル変数は、
+次節のローカル変数と同じような扱いをする必要があります。
+
+** ローカル変数
+~defvar-local~ で定義された変数、ないし、 ~defvar~ で定義されて
+~make-variable-buffer-local~ された変数は、
+通常、不特定多数のバッファでローカル値を持つので、
+~let~ の遮蔽が十分には効きません。
+~let~ が遮蔽してくれるのは、カレントバッファのローカル値か、
+デフォルト値のいずれか一方だけです。
+（対象の変数がカレントバッファでローカル値を持たないとき、デフォルト値が遮蔽の対象になります。）
+他の多くのバッファのローカル値は全くカバーしてくれませんので、
+~with-current-buffer~ などでバッファを変えた途端、
+テストの本体が通常の環境に晒されてしまいます。
+仕方がないので、テスト本体を実行する前に、現在の状態を保存して、
+既存のローカル値を全て消去します。
+本体の実行後、保存した状態を復元して、副作用をなかったことにします。
+#+begin_src emacs-lisp
+  (defvar global-variable1 11)
+  (defvar global-variable2 12)
+  (defvar-local local-variable1 31)
+  (defvar-local local-variable2 32)
+
+  (defmacro with-sample-pseudo-environment (&rest body)
+    "Evaluate BODY with pseudo environment."
+    `(let ((global-variable1 21)
+           (global-variable2 22)
+           ;; ...
+           )
+       (let ((local-variable-if-set-alist
+              ;; Alist of local variables and its values bound in body
+              `((local-variable1 . ,41)   ; 41 and 42 can be arbitrary form
+                (local-variable2 . ,42)   ; for let-bound values.
+                ;; ...
+                ))
+             local-variable-values-alist
+             ;; Data storage for current values of local variables
+             )
+         ;; Save local values of local variables
+         (dolist (buffer (buffer-list))
+           (with-current-buffer buffer
+             (let (list)
+               (dolist (cell local-variable-if-set-alist)
+                 (let ((variable (car cell)))
+                   (if (local-variable-p variable)
+                       (push `(,variable . ,(symbol-value variable)) list))))
+               (if list (push `(,buffer . ,list) local-variable-values-alist)))))
+         ;; Save default values of local variables
+         (push `(nil . ,(mapcar (lambda (cell)
+                                  (let ((variable (car cell)))
+                                    `(,variable . ,(default-value variable))))
+                                local-variable-if-set-alist))
+               local-variable-values-alist)
+         (unwind-protect
+             (progn
+               ;; Kill local variables
+               (dolist (buffer-binding-list (cdr local-variable-values-alist))
+                 (with-current-buffer (car buffer-binding-list)
+                   (dolist (binding (cdr buffer-binding-list))
+                     (kill-local-variable (car binding)))))
+               ;; Set temporary values of local variables
+               (dolist (cell local-variable-if-set-alist)
+                 (set-default (car cell) (cdr cell)))
+               ,@body)
+           ;; Restore default values of local variables
+           (dolist (binding (cdar local-variable-values-alist))
+             (set-default (car binding) (cdr binding)))
+           ;; Restore local values of local variables
+           (dolist (buffer-binding-list (cdr local-variable-values-alist))
+             (with-current-buffer (car buffer-binding-list)
+               (dolist (binding (cdr buffer-binding-list))
+                 (set (car binding) (cdr binding)))))))))
+#+end_src
+
+上記のコードでは、マクロ内部でデータを保持するために、マクロ内部でしか使わない ~let~ 変数
+~local-variable-if-set-alist~ と ~local-variable-alist~ を使っています。
+このままだと、これらの変数に対して変数補足が起きて、
+~body~ の中で特別な意味を持ってしまいます。
+そこで、 ~make-symbol~ を使ってこれを回避します。
+#+begin_src emacs-lisp
+  (defvar global-variable1 11)
+  (defvar global-variable2 12)
+  (defvar-local local-variable1 31)
+  (defvar-local local-variable2 32)
+
+  (defmacro with-sample-pseudo-environment (&rest body)
+    "Evaluate BODY with pseudo environment."
+    (let ((local-variable-if-set-alist
+           (make-symbol "local-variable-if-set-alist"))
+          (local-variable-values-alist
+           (make-symbol "local-variable-values-alist")))
+      `(let ((global-variable1 21)
+             (global-variable2 22)
+             ;; ...
+             )
+         (let ((,local-variable-if-set-alist
+                ;; Alist of local variables and its values bound in body
+                `((local-variable1 . ,41)
+                  (local-variable2 . ,42)
+                  ;; ...
+                  ))
+               ,local-variable-values-alist
+               ;; Data storage for current values of local variables
+               )
+           ;; Save local values of local variables
+           (dolist (buffer (buffer-list))
+             (with-current-buffer buffer
+               (let (list)
+                 (dolist (cell ,local-variable-if-set-alist)
+                   (let ((variable (car cell)))
+                     (if (local-variable-p variable)
+                         (push `(,variable . ,(symbol-value variable)) list))))
+                 (if list
+                     (push `(,buffer . ,list) ,local-variable-values-alist)))))
+           ;; Save default values of local variables
+           (push `(nil . ,(mapcar (lambda (cell)
+                                    (let ((variable (car cell)))
+                                      `(,variable . ,(default-value variable))))
+                                  ,local-variable-if-set-alist))
+                 ,local-variable-values-alist)
+           (unwind-protect
+               (progn
+                 ;; Kill local variables
+                 (dolist (buffer-binding-list (cdr ,local-variable-values-alist))
+                   (with-current-buffer (car buffer-binding-list)
+                     (dolist (binding (cdr buffer-binding-list))
+                       (kill-local-variable (car binding)))))
+                 ;; Set temporary values of local variables
+                 (dolist (cell ,local-variable-if-set-alist)
+                   (set-default (car cell) (cdr cell)))
+                 ,@body)
+             ;; Restore default values of local variables
+             (dolist (binding (cdar ,local-variable-values-alist))
+               (set-default (car binding) (cdr binding)))
+             ;; Restore local values of local variables
+             (dolist (buffer-binding-list (cdr ,local-variable-values-alist))
+               (with-current-buffer (car buffer-binding-list)
+                 (dolist (binding (cdr buffer-binding-list))
+                   (set (car binding) (cdr binding))))))))))
+#+end_src
+
+前節で触れたような、 ~setq-local~ される可能性のあるグローバル変数についても、
+上記とほぼ同じコードで対処することができます。
+気をつける必要があるのは最終行の ~set~ のみです。
+~defvar-local~ で定義されている変数は、値を ~set~ すると、
+自動でバッファローカルになりますが、
+~defvar~ 変数は明示的にローカル変数を作ってやる必要があります。
+具体的には、最終行の直前に、下記を追加すれば、 ~defvar~ 変数と ~defvar-local~ 変数、
+両方を扱うことができるようになります。
+
+#+begin_src emacs-lisp
+  (unless (local-variable-if-set-p (car binding))
+    (make-local-variable (car binding)))
+#+end_src
+
+以下では、簡単のために、 ~defvar-local~ 変数のみをサポートするコードで実装を進めていきます。
+
+** シンボル
+被テスト関数が、引数にシンボルを受け取ったり、関数内で ~intern~ したりするとき、
+一般的にその関数は、任意のシンボルに対して依存性・副作用を持ちます。
+シンボルには、[[https://www.gnu.org/software/emacs/manual/html_node/elisp/Symbol-Components.html][値、関数、プロパティ（と名前）]]が紐付けられているので、
+これらを参照するときはシンボルに対して依存性を持ち、これらを変更するときは副作用を残します。
+また、副作用について、より厳格な立場に立つと、未使用のシンボルをテスト内で使用するだけでも、
+シンボルの生成という副作用が ~obarray~ に残ります。
+そこで、テスト内では、シンボルをテスト用の一時 ~obarray~ に生成させることで、
+環境依存と副作用を回避していきます。
+
+具体的には、 ~intern~ と ~unintern~ にアドバイスを仕掛けて、
+テスト用の ~obarray~ を差し込むようにします。
+テスト用  ~obarray~ は、疑似環境のセットアップ時に ~obarray-make~ して
+~let~ で保持しておきます。
+これによって、テスト本体内では、 ~intern~ を介せば、
+同じシンボルにアクセスができるようになります。
+
+テスト用 ~obarray~ によるシンボルの隔離は、全てのシンボルに対して行うと
+他のライブラリの動作を不安定にさせてしまう可能性があります。
+そこで、隔離を行うシンボルを限定し、アドバイス関数の中でふるい分けを行うようにします。
+（今回の例では、 ~sample~ というプレフィックスを持つシンボルだけ隔離するようにします。）
+もし、全てのシンボルを隔離してしまってよいのであれば、もっと荒っぽく、
+~let~ を使って、 ~obarray~ にテスト用の ~obarray~ を束縛するだけでも隔離を実現できます。
+
+#+begin_src emacs-lisp
+  (defvar global-variable1 11)
+  (defvar global-variable2 12)
+  (defvar-local local-variable1 31)
+  (defvar-local local-variable2 32)
+
+  (defmacro with-sample-pseudo-environment (&rest body)
+    "Evaluate BODY with pseudo environment."
+    (let ((local-variable-if-set-alist
+           (make-symbol "local-variable-if-set-alist"))
+          (local-variable-values-alist
+           (make-symbol "local-variable-values-alist"))
+          (temp-obarray (make-symbol "temp-obarray")))
+      `(let ((global-variable1 21)
+             (global-variable2 21)
+             ;; ...
+             )
+         (let ((,local-variable-if-set-alist
+                `((local-variable1 . ,41)
+                  (local-variable2 . ,42)
+                  ;; ...
+                  ))
+               ,local-variable-values-alist)
+           (dolist (buffer (buffer-list))
+             (with-current-buffer buffer
+               (let (list)
+                 (dolist (cell ,local-variable-if-set-alist)
+                   (let ((variable (car cell)))
+                     (if (local-variable-p variable)
+                         (push `(,variable . ,(symbol-value variable)) list))))
+                 (if list
+                     (push `(,buffer . ,list) ,local-variable-values-alist)))))
+           (push `(nil . ,(mapcar (lambda (cell)
+                                    (let ((variable (car cell)))
+                                      `(,variable . ,(default-value variable))))
+                                  ,local-variable-if-set-alist))
+                 ,local-variable-values-alist)
+           (let* ((,temp-obarray (obarray-make)) ; Temporary obarray for the test
+                  (deflect-to-temp-obarray       ; Advice for intern and unintern
+                    (lambda (args)
+                      (if (cadr args)
+                          args            ; If obarray is specified, keep it.
+                        (let ((name (car args)))
+                          ;; If specified name of the symbol has prefix "sample",
+                          ;; temporary obarray is used.
+                          ;; Otherwise, standard obarray is used.
+                          (if (string-prefix-p "sample" name)
+                              (list name ,temp-obarray)
+                            args))))))
+             (unwind-protect
+                 (progn
+                   (dolist (buffer-binding-list
+                            (cdr ,local-variable-values-alist))
+                     (with-current-buffer (car buffer-binding-list)
+                       (dolist (binding (cdr buffer-binding-list))
+                         (kill-local-variable (car binding)))))
+                   (dolist (cell ,local-variable-if-set-alist)
+                     (set-default (car cell) (cdr cell)))
+                   (advice-add 'intern :filter-args deflect-to-temp-obarray)
+                   (advice-add 'unintern :filter-args deflect-to-temp-obarray)
+                   ,@body)
+               (advice-remove 'unintern deflect-to-temp-obarray)
+               (advice-remove 'intern deflect-to-temp-obarray)
+               (dolist (binding (cdar ,local-variable-values-alist))
+                 (set-default (car binding) (cdr binding)))
+               (dolist (buffer-binding-list (cdr ,local-variable-values-alist))
+                 (with-current-buffer (car buffer-binding-list)
+                   (dolist (binding (cdr buffer-binding-list))
+                     (set (car binding) (cdr binding)))))))))))
+#+end_src
+
+ここで、テスト用の ~obarray~ を保持するために、内部で ~let~ 変数を使っているので、
+前節と同じ ~make-symbol~ のテクニックを使って、変数補足を回避しています。
+
+テスト本体でシンボルを使う際には、 ~intern~ を噛ませるようにします。
+
+#+begin_src emacs-lisp
+  (ert-deftest sample-test ()
+    "Sample for manipulating symbol."
+    (with-sample-pseudo-environment
+     ;; Use intern for symbols
+     (should (eq (intern "sample-symbol") (intern "sample-symbol")))))
+#+end_src
+
+** Current buffer
+~current-buffer~ への依存は、テスト本体を ~with-temp-buffer~ で
+包んであげれば簡単に回避できます。
+#+begin_src emacs-lisp
+  (defvar global-variable1 11)
+  (defvar global-variable2 12)
+  (defvar-local local-variable1 31)
+  (defvar-local local-variable2 32)
+
+  (defmacro with-sample-pseudo-environment (&rest body)
+    "Evaluate BODY with pseudo environment."
+    (let ((local-variable-if-set-alist
+           (make-symbol "local-variable-if-set-alist"))
+          (local-variable-values-alist
+           (make-symbol "local-variable-values-alist"))
+          (temp-obarray (make-symbol "temp-obarray")))
+      `(let ((global-variable1 21)
+             (global-variable2 21)
+             ;; ...
+             )
+         (let ((,local-variable-if-set-alist
+                `((local-variable1 . ,41)
+                  (local-variable2 . ,42)
+                  ;; ...
+                  ))
+               ,local-variable-values-alist)
+           (dolist (buffer (buffer-list))
+             (with-current-buffer buffer
+               (let (list)
+                 (dolist (cell ,local-variable-if-set-alist)
+                   (let ((variable (car cell)))
+                     (if (local-variable-p variable)
+                         (push `(,variable . ,(symbol-value variable)) list))))
+                 (if list
+                     (push `(,buffer . ,list) ,local-variable-values-alist)))))
+           (push `(nil . ,(mapcar (lambda (cell)
+                                    (let ((variable (car cell)))
+                                      `(,variable . ,(default-value variable))))
+                                  ,local-variable-if-set-alist))
+                 ,local-variable-values-alist)
+           (with-temp-buffer
+             (let* ((,temp-obarray (obarray-make))
+                    (deflect-to-temp-obarray
+                      (lambda (args)
+                        (if (cadr args)
+                            args
+                          (let ((name (car args)))
+                            (if (string-prefix-p "sample" name)
+                                (list name ,temp-obarray)
+                              args))))))
+               (unwind-protect
+                   (progn
+                     (dolist (buffer-binding-list
+                              (cdr ,local-variable-values-alist))
+                       (with-current-buffer (car buffer-binding-list)
+                         (dolist (binding (cdr buffer-binding-list))
+                           (kill-local-variable (car binding)))))
+                     (dolist (cell ,local-variable-if-set-alist)
+                       (set-default (car cell) (cdr cell)))
+                     (advice-add 'intern :filter-args deflect-to-temp-obarray)
+                     (advice-add 'unintern :filter-args deflect-to-temp-obarray)
+                     ,@body)
+                 (advice-remove 'unintern deflect-to-temp-obarray)
+                 (advice-remove 'intern deflect-to-temp-obarray)
+                 (dolist (binding (cdar ,local-variable-values-alist))
+                   (set-default (car binding) (cdr binding)))
+                 (dolist (buffer-binding-list (cdr ,local-variable-values-alist))
+                   (with-current-buffer (car buffer-binding-list)
+                     (dolist (binding (cdr buffer-binding-list))
+                       (set (car binding) (cdr binding))))))))))))
+#+end_src
+
+これで、テストの本体は、一時バッファで実行されます。
+
+** パッケージ外のフックとvariable-watcher
+フックや、variable-watcherは予期しない副作用を及ぼす可能性があるので、
+テスト前後でつけ外しをしておきます。
+パッケージ内のフックは、パッケージのグローバル/ローカル変数を隔離する際に
+~nil~ に束縛してしまっておけば、それ以上の特別な処置は不要です。
+パッケージ外のフックについても、同様の方法で動作を止められるのですが、
+パッケージ外の変数に対して、一時的にでも大きな変更を加えるのは避けたほうが無難と思われたので、
+パッケージが追加したフック関数だけ、外しておくことにしました。
+なお、テストにおいて、そもそも[[https://www.gnu.org/software/emacs/manual/html_node/ert/Tests-and-Their-Environment.html][フックが動作するような大規模な操作は避けるべき]]なので、
+フック関数のつけ外しは保険です。
+実際には、係るフックが動作するようなテストは（係るフック関数のテストを除き）作りません。
+
+#+begin_src emacs-lisp
+  (defvar global-variable1 11)
+  (defvar global-variable2 12)
+  (defvar-local local-variable1 31)
+  (defvar-local local-variable2 32)
+
+  (defvar sample-hook nil)
+  (defun hook-function ())
+  (add-hook 'sample-hook #'hook-function)
+  (defun variable-watcher (&rest _))
+  (add-variable-watcher 'global-variable1 #'variable-watcher)
+
+  (defmacro with-sample-pseudo-environment (&rest body)
+    "Evaluate BODY with pseudo environment."
+    (let ((local-variable-if-set-alist
+           (make-symbol "local-variable-if-set-alist"))
+          (local-variable-values-alist
+           (make-symbol "local-variable-values-alist"))
+          (temp-obarray (make-symbol "temp-obarray")))
+      `(let ((global-variable1 21)
+             (global-variable2 21)
+             ;; ...
+             )
+         (let ((,local-variable-if-set-alist
+                `((local-variable1 . ,41)
+                  (local-variable2 . ,42)
+                  ;; ...
+                  ))
+               ,local-variable-values-alist)
+           (dolist (buffer (buffer-list))
+             (with-current-buffer buffer
+               (let (list)
+                 (dolist (cell ,local-variable-if-set-alist)
+                   (let ((variable (car cell)))
+                     (if (local-variable-p variable)
+                         (push `(,variable . ,(symbol-value variable)) list))))
+                 (if list
+                     (push `(,buffer . ,list) ,local-variable-values-alist)))))
+           (push `(nil . ,(mapcar (lambda (cell)
+                                    (let ((variable (car cell)))
+                                      `(,variable . ,(default-value variable))))
+                                  ,local-variable-if-set-alist))
+                 ,local-variable-values-alist)
+           (with-temp-buffer
+             (let* ((,temp-obarray (obarray-make))
+                    (deflect-to-temp-obarray
+                      (lambda (args)
+                        (if (cadr args)
+                            args
+                          (let ((name (car args)))
+                            (if (string-prefix-p "sample" name)
+                                (list name ,temp-obarray)
+                              args))))))
+               (unwind-protect
+                   (progn
+                     ;; Remove hook and variable watcher
+                     (remove-hook 'sample-hook #'hook-function)
+                     (remove-variable-watcher 'global-variable1
+                                              #'variable-watcher)
+                     (dolist (buffer-binding-list
+                              (cdr ,local-variable-values-alist))
+                       (with-current-buffer (car buffer-binding-list)
+                         (dolist (binding (cdr buffer-binding-list))
+                           (kill-local-variable (car binding)))))
+                     (dolist (cell ,local-variable-if-set-alist)
+                       (set-default (car cell) (cdr cell)))
+                     (advice-add 'intern :filter-args deflect-to-temp-obarray)
+                     (advice-add 'unintern :filter-args deflect-to-temp-obarray)
+                     ,@body)
+                 (advice-remove 'unintern deflect-to-temp-obarray)
+                 (advice-remove 'intern deflect-to-temp-obarray)
+                 (dolist (binding (cdar ,local-variable-values-alist))
+                   (set-default (car binding) (cdr binding)))
+                 (dolist (buffer-binding-list (cdr ,local-variable-values-alist))
+                   (with-current-buffer (car buffer-binding-list)
+                     (dolist (binding (cdr buffer-binding-list))
+                       (set (car binding) (cdr binding)))))
+                 ;; Restore hook and variable watcher
+                 (add-variable-watcher 'global-variable1 #'variable-watcher)
+                 (add-hook 'sample-hook #'hook-function))))))))
+#+end_src
+
+* 結び
+随分大掛かりになってしまいましたが、疑似環境マクロができました。
+これで心置きなくテストが書けます。
