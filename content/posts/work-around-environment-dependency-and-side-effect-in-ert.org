@@ -6,7 +6,7 @@
 #+slug: work-around-environment-dependency-and-side-effect-in-ert
 #+description:
 #+tags[]: Emacs Lisp Test
-#+lastmod: <2022-11-20 Sun 15:10>
+#+lastmod: <2022-11-22 Tue 00:16>
 #+isCJKLanguage: true
 
 自作のEmacsのパッケージ用にテストを書こうと思い、[[https://www.gnu.org/software/emacs/manual/html_node/ert/index.html][ERT]]を使い始めました。
@@ -161,6 +161,13 @@
                (dolist (cell local-variable-if-set-alist)
                  (set-default (car cell) (cdr cell)))
                ,@body)
+           ;; Kill local variables made during test body
+           (dolist (buffer (buffer-list))
+             (with-current-buffer buffer
+               (dolist (cell local-variable-if-set-alist)
+                 (let ((variable (car cell)))
+                   (if (local-variable-p variable)
+                       (kill-local-variable variable))))))
            ;; Restore default values of local variables
            (dolist (binding (cdar local-variable-values-alist))
              (set-default (car binding) (cdr binding)))
@@ -228,6 +235,13 @@
                  (dolist (cell ,local-variable-if-set-alist)
                    (set-default (car cell) (cdr cell)))
                  ,@body)
+             ;; Kill local variables made during test body
+             (dolist (buffer (buffer-list))
+               (with-current-buffer buffer
+                 (dolist (cell local-variable-if-set-alist)
+                   (let ((variable (car cell)))
+                     (if (local-variable-p variable)
+                         (kill-local-variable variable))))))
              ;; Restore default values of local variables
              (dolist (binding (cdar ,local-variable-values-alist))
                (set-default (car binding) (cdr binding)))
@@ -341,6 +355,12 @@
                    ,@body)
                (advice-remove 'unintern deflect-to-temp-obarray)
                (advice-remove 'intern deflect-to-temp-obarray)
+               (dolist (buffer (buffer-list))
+                 (with-current-buffer buffer
+                   (dolist (cell local-variable-if-set-alist)
+                     (let ((variable (car cell)))
+                       (if (local-variable-p variable)
+                           (kill-local-variable variable))))))
                (dolist (binding (cdar ,local-variable-values-alist))
                  (set-default (car binding) (cdr binding)))
                (dolist (buffer-binding-list (cdr ,local-variable-values-alist))
@@ -426,6 +446,12 @@
                      ,@body)
                  (advice-remove 'unintern deflect-to-temp-obarray)
                  (advice-remove 'intern deflect-to-temp-obarray)
+                 (dolist (buffer (buffer-list))
+                   (with-current-buffer buffer
+                     (dolist (cell local-variable-if-set-alist)
+                       (let ((variable (car cell)))
+                         (if (local-variable-p variable)
+                             (kill-local-variable variable))))))
                  (dolist (binding (cdar ,local-variable-values-alist))
                    (set-default (car binding) (cdr binding)))
                  (dolist (buffer-binding-list (cdr ,local-variable-values-alist))
@@ -519,6 +545,12 @@
                      ,@body)
                  (advice-remove 'unintern deflect-to-temp-obarray)
                  (advice-remove 'intern deflect-to-temp-obarray)
+                 (dolist (buffer (buffer-list))
+                   (with-current-buffer buffer
+                     (dolist (cell local-variable-if-set-alist)
+                       (let ((variable (car cell)))
+                         (if (local-variable-p variable)
+                             (kill-local-variable variable))))))
                  (dolist (binding (cdar ,local-variable-values-alist))
                    (set-default (car binding) (cdr binding)))
                  (dolist (buffer-binding-list (cdr ,local-variable-values-alist))
