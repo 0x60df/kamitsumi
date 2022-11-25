@@ -4,9 +4,9 @@
 #+EMAIL: 0x60df@gmail.com
 #+LANGUAGE: ja
 #+slug: work-around-environment-dependency-and-side-effect-in-ert
-#+description:
+#+description: ERTを使ってテストを書くときに避けるべき環境依存と副作用について、パッケージの影響範囲をまるごと保護するための疑似環境マクロを作った作業記録。
 #+tags[]: Emacs Lisp Test
-#+lastmod: <2022-11-22 Tue 00:16>
+#+lastmod: <2022-11-25 Fri 23:48>
 #+isCJKLanguage: true
 
 自作のEmacsのパッケージ用にテストを書こうと思い、[[https://www.gnu.org/software/emacs/manual/html_node/ert/index.html][ERT]]を使い始めました。
