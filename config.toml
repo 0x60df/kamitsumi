@@ -91,6 +91,9 @@ googleAnalytics = 'G-4YRCJEYXB4'
     International License.
     See http://creativecommons.org/licenses/by/4.0/ for the license."""
 
+  [params.assets]
+    favicon = "/kamitsumi.ico"
+
   [[params.socialIcons]]
     name = "github"
     url = "https://github.com/0x60df/"
