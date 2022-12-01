@@ -92,11 +92,8 @@ googleAnalytics = 'G-4YRCJEYXB4'
     See http://creativecommons.org/licenses/by/4.0/ for the license."""
 
   [params.assets]
-    favicon = "/kamitsumi.ico"
-    favicon16x16 = "/kamitsumi-16.ico"
-    favicon32x32 = "/kamitsumi-32.ico"
-    apple_touch_icon = "/kamitsumi-152.ico"
-    safari_pinned_tab = "/kamitsumi-192.ico"
+    favicon = "/favicon.ico"
+    apple_touch_icon = "/apple-touch-icon.png"
 
   [[params.socialIcons]]
     name = "github"
